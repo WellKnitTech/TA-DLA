@@ -1,0 +1,11 @@
+click
+requests
+py7zr
+rarfile
+python-dotenv
+pyftpdlib
+mega.py
+sqlite-utils
+yara-python
+pandas
+jinja2 
