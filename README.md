@@ -41,4 +41,40 @@ README.md                # Project documentation
 SoftwareRequirements.MD  # Full requirements
 ```
 
-To add support for a new threat actor or download method, create a new module in `scraper/` or `downloader/` and update `ta_config.json` for your case. 
+To add support for a new threat actor or download method, create a new module in `scraper/` or `downloader/` and update `ta_config.json` for your case.
+
+## Optional: ClamAV Antivirus Scanning
+
+TA-DLA supports scanning files for malware using ClamAV, via the optional [python-clamd](https://pypi.org/project/clamd/) package and a running ClamAV daemon. This is not required for core functionality, but is recommended for additional malware detection.
+
+### To enable ClamAV scanning:
+1. **Install ClamAV and the daemon:**
+   - **Ubuntu/Debian:**
+     ```sh
+     sudo apt-get install clamav-daemon clamav-freshclam
+     sudo freshclam
+     sudo systemctl start clamav-daemon
+     ```
+   - **Arch/Manjaro:**
+     ```sh
+     sudo pacman -S clamav clamav-daemon
+     sudo freshclam
+     sudo systemctl start clamav-daemon
+     ```
+2. **Install the Python package:**
+   ```sh
+   pip install clamd
+   ```
+3. **Run TA-DLA with ClamAV scanning enabled (CLI integration required).**
+
+If ClamAV or python-clamd is not installed, TA-DLA will skip AV scanning and provide instructions.
+
+## Inventory Tracking (SQLite)
+
+TA-DLA uses a per-case `inventory.db` (SQLite) to track download, extraction, and analysis status for every file. This enables:
+- Resumable downloads and analysis (even for very large leak sets)
+- Querying failed or pending downloads
+- Tracking extraction and analysis findings
+- Reliable reporting and workflow recovery
+
+The database is created automatically in each case directory and is required for robust, large-scale workflows. 

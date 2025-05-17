@@ -1,0 +1,30 @@
+# Third-Party Licenses for TA-DLA
+
+This file tracks the licenses of all major third-party dependencies used in this project.
+
+## YARA Rules
+- Yara-Rules/rules: GPL v2 (https://github.com/Yara-Rules/rules)
+- ReversingLabs YARA Rules: MIT (https://github.com/reversinglabs/reversinglabs-yara-rules)
+
+## Python Packages
+- click: BSD (https://palletsprojects.com/p/click/)
+- requests: Apache 2.0 (https://requests.readthedocs.io/)
+- py7zr: LGPL v2.1+ (https://github.com/miurahr/py7zr)
+- rarfile: ISC (https://github.com/markokr/rarfile)
+- python-dotenv: BSD (https://github.com/theskumar/python-dotenv)
+- pyftpdlib: MIT (https://github.com/giampaolo/pyftpdlib)
+- mega.py: MIT (https://github.com/odwyersoftware/mega.py)
+- sqlite-utils: Apache 2.0 (https://github.com/simonw/sqlite-utils)
+- yara-python: Apache 2.0 (https://github.com/VirusTotal/yara-python)
+- pandas: BSD (https://pandas.pydata.org/)
+- jinja2: BSD (https://palletsprojects.com/p/jinja/)
+
+## Other
+- Any additional rulesets, scripts, or data sources should be added here with their license and source URL.
+
+---
+
+**Note:**
+- If you add new dependencies, update this file with their license and source.
+- For full license texts, see the respective repositories or PyPI pages.
+- If you distribute this toolkit, you must comply with the terms of all included licenses, especially GPL v2 for Yara-Rules/rules. 

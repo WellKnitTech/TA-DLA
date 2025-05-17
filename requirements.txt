@@ -8,4 +8,6 @@ mega.py
 sqlite-utils
 yara-python
 pandas
-jinja2 
+jinja2
+# Optional: For ClamAV AV scanning
+# pip install clamd 

@@ -3,6 +3,8 @@
 
 import logging
 import os
+import requests
+from datetime import datetime, timedelta
 
 def get_case_logger(case_dir, log_name='downloader.log'):
     """
@@ -33,3 +35,31 @@ def get_case_logger(case_dir, log_name='downloader.log'):
         logger.propagate = False
     # TODO: Add log rotation if needed
     return logger 
+
+def get_active_ransomware_groups_last_6_months():
+    """
+    Fetch all ransomware groups (TAs) active in the last 6 months using ransomware.live API.
+    Returns a sorted list of unique group names.
+    """
+    BASE_URL = "https://api.ransomware.live/v2"
+    now = datetime.utcnow()
+    months = [(now.year, now.month)]
+    for i in range(1, 6):
+        prev = now - timedelta(days=30*i)
+        months.append((prev.year, prev.month))
+    active_groups = set()
+    for year, month in months:
+        url = f"{BASE_URL}/victims/{year}/{month:02d}"
+        try:
+            resp = requests.get(url, timeout=15)
+            if resp.status_code == 200:
+                victims = resp.json()
+                for victim in victims:
+                    group = victim.get("group_name")
+                    if group:
+                        active_groups.add(group)
+            else:
+                print(f"[WARN] Failed to fetch {year}-{month:02d}: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"[ERROR] Exception fetching {year}-{month:02d}: {e}")
+    return sorted(active_groups) 

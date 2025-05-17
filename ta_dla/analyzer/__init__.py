@@ -1,1 +1,1 @@
- 
+from . import clamav_scanner 
