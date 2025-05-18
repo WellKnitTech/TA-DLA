@@ -172,6 +172,7 @@ def download_ftp(case_dir, ftp_server, ftp_user, ftp_pass, ftp_path, ignore_opse
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
+@click.option('--victim', type=str, default=None, help='Victim/organization name (will be matched to ransomware.live, or use "unknown")')
 @click.option('--extracted-dir', type=click.Path(), default=None, help='Directory of extracted files (default: <case-dir>/extracted)')
 @click.option('--output-csv', type=click.Path(), default=None, help='CSV file to write PII/PHI/PCI findings (default: <case-dir>/reports/pii.csv)')
 @click.option('--batch-size', type=int, default=32, help='Number of files to process per batch')
@@ -185,7 +186,7 @@ def download_ftp(case_dir, ftp_server, ftp_user, ftp_pass, ftp_path, ignore_opse
 @click.option('--skip-clamav', is_flag=True, default=False, help='Explicitly skip ClamAV scanning (overrides --clamav)')
 @click.option('--ta-group', type=str, default=None, help='Threat Actor group name (will be matched to ransomware.live, or use "unknown")')
 @click.option('--refresh-enrichment', is_flag=True, default=False, help='Force refresh of enrichment data from ransomware.live')
-def analyze(case_dir, extracted_dir, output_csv, batch_size, max_workers, yara, yara_output_csv, yara_rulesets, update_yara, clamav, clamav_output_csv, skip_clamav, ta_group, refresh_enrichment):
+def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers, yara, yara_output_csv, yara_rulesets, update_yara, clamav, clamav_output_csv, skip_clamav, ta_group, refresh_enrichment):
     """
     Analyze extracted files for PII, PHI, PCI, high-entropy secrets, and (optionally) malware with YARA and ClamAV.
     Outputs findings to CSV files for reporting. Integrates ransomware.live enrichment and YARA rules if available.
@@ -202,21 +203,50 @@ def analyze(case_dir, extracted_dir, output_csv, batch_size, max_workers, yara, 
     group_info = None
     yara_rules_str = None
     cert_contacts = None
-    # Enrichment: prompt for TA group, match to ransomware.live, fetch enrichment
+    victim_info = None
+    enrichment_client = RansomwareLiveEnrichment(logger=logger)
+    # Prompt for victim name if not provided
+    if victim is None:
+        recent_victims = enrichment_client.get_recent_victims() or []
+        victim_names = [v['victim'] for v in recent_victims if 'victim' in v]
+        click.echo("Recent victims from ransomware.live:")
+        click.echo(", ".join(sorted(victim_names)[:30]) + (", ..." if len(victim_names) > 30 else ""))
+        victim = click.prompt('Enter victim/organization name (or "unknown")', default='unknown')
+    else:
+        recent_victims = enrichment_client.get_recent_victims() or []
+        victim_names = [v['victim'] for v in recent_victims if 'victim' in v]
+    matched_victim = None
+    if victim and victim.lower() != 'unknown':
+        for v in recent_victims:
+            if victim.lower() == v['victim'].lower():
+                matched_victim = v
+                break
+        if not matched_victim:
+            for v in recent_victims:
+                if victim.lower() in v['victim'].lower():
+                    matched_victim = v
+                    break
+        if not matched_victim:
+            click.echo(f"Victim '{victim}' not found in recent ransomware.live data. Proceeding as 'unknown'.")
+            victim = 'unknown'
+    else:
+        victim = 'unknown'
+    if matched_victim:
+        victim_info = matched_victim
+    else:
+        victim_info = {'name': victim}
+    # ... existing group enrichment logic ...
     if ta_group is None:
-        enrichment_client = RansomwareLiveEnrichment(logger=logger)
         groups = enrichment_client.get_groups() or []
         group_names = [g['name'] for g in groups if 'name' in g]
         click.echo("Known Threat Actor groups from ransomware.live:")
         click.echo(", ".join(sorted(group_names)))
         ta_group = click.prompt('Enter Threat Actor group name (or "unknown")', default='unknown')
     else:
-        enrichment_client = RansomwareLiveEnrichment(logger=logger)
         groups = enrichment_client.get_groups() or []
         group_names = [g['name'] for g in groups if 'name' in g]
     matched_group = None
     if ta_group and ta_group.lower() != 'unknown':
-        # Try to match (case-insensitive, partial ok)
         for g in groups:
             if ta_group.lower() == g['name'].lower():
                 matched_group = g['name']
@@ -232,16 +262,17 @@ def analyze(case_dir, extracted_dir, output_csv, batch_size, max_workers, yara, 
     else:
         ta_group = 'unknown'
     enrichment_data = {}
-    if ta_group != 'unknown' and (refresh_enrichment or not os.path.exists(enrichment_path)):
-        group_info = enrichment_client.get_group(matched_group or ta_group)
-        yara_rules_str = enrichment_client.get_yara_rules(matched_group or ta_group)
-        # Try to get CERT contacts for US (or victim country if available in future)
+    if (victim != 'unknown' or ta_group != 'unknown') and (refresh_enrichment or not os.path.exists(enrichment_path)):
+        group_info = enrichment_client.get_group(matched_group or ta_group) if ta_group != 'unknown' else None
+        yara_rules_str = enrichment_client.get_yara_rules(matched_group or ta_group) if ta_group != 'unknown' else None
         cert_contacts = enrichment_client.get_cert_contacts('US')
         enrichment_data = {
+            'victim': victim_info,
             'group': group_info,
             'yara_rules': yara_rules_str,
             'cert_contacts': cert_contacts,
-            'group_name': matched_group or ta_group
+            'group_name': matched_group or ta_group,
+            'victim_name': victim
         }
         with open(enrichment_path, 'w', encoding='utf-8') as f:
             json.dump(enrichment_data, f, indent=2)
@@ -251,6 +282,7 @@ def analyze(case_dir, extracted_dir, output_csv, batch_size, max_workers, yara, 
         group_info = enrichment_data.get('group')
         yara_rules_str = enrichment_data.get('yara_rules')
         cert_contacts = enrichment_data.get('cert_contacts')
+        victim_info = enrichment_data.get('victim')
     logger.info(f"Starting PII/PHI/PCI/entropy scan: {extracted_dir} -> {output_csv}")
     finding_count = scan_directory_for_pii_phi_pci(
         directory=extracted_dir,
@@ -587,7 +619,7 @@ def report(case_dir, output_html, pii_csv, yara_csv, clamav_csv, victim_info, ta
         clamav_summary=None,  # Add clamav summary if needed
         cross_refs=cross_reference_sensitive_files(yara_csv, pii_csv) if yara_csv and pii_csv and os.path.exists(yara_csv) and os.path.exists(pii_csv) else [],
         opsec_reminder=None,
-        victim_info=None,  # Add victim info if needed
+        victim_info=victim_info,
         ta_info=group_info,
         template_path=template,
         multi_pii_files=None,

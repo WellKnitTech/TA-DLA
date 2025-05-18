@@ -260,6 +260,8 @@ def generate_html_dashboard(
             ta_info = enrichment.get('group')
         if not cert_contacts:
             cert_contacts = enrichment.get('cert_contacts')
+        if not victim_info:
+            victim_info = enrichment.get('victim')
         if yara_rules_used is None:
             yara_rules_used = bool(enrichment.get('yara_rules') and 'rule ' in enrichment.get('yara_rules'))
     if not opsec_reminder:
