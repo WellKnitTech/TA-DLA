@@ -171,6 +171,10 @@ def download_ftp(case_dir, ftp_server, ftp_user, ftp_pass, ftp_path, ignore_opse
     else:
         logger.error(f"Failed to download from FTP: {ftp_server}:{ftp_path}")
 
+def load_case_config(case_dir):
+    cm = CaseManager(case_dir)
+    return cm.load_config() or {}
+
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
 @click.option('--victim', type=str, default=None, help='Victim/organization name (will be matched to ransomware.live, or use "unknown")')
@@ -192,6 +196,12 @@ def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers
     Analyze extracted files for PII, PHI, PCI, high-entropy secrets, and (optionally) malware with YARA and ClamAV.
     Outputs findings to CSV files for reporting. Integrates ransomware.live enrichment and YARA rules if available.
     """
+    config = load_case_config(case_dir)
+    # Use case.json as default for victim and ta_group
+    if not victim:
+        victim = (config.get('victim', {}) or {}).get('name') or config.get('victim_name')
+    if not ta_group:
+        ta_group = config.get('ta_group') or config.get('group_name')
     logger = get_case_logger(case_dir)
     inventory.init_inventory_db(case_dir)
     inventory.add_event(case_dir, 'analyze_start', 'Starting analysis phase')
@@ -594,10 +604,14 @@ def report(case_dir, output_html, pii_csv, yara_csv, clamav_csv, victim_info, ta
     """
     Generate HTML dashboard and summary reports for the case, including enrichment from ransomware.live if available.
     """
-    import json
-    from ta_dla.analyzer.reporting import (
-        summarize_downloads, summarize_pii_phi_pci, yara_summary_report, cross_reference_sensitive_files, generate_html_dashboard
-    )
+    config = load_case_config(case_dir)
+    # Use case.json as default for victim and ta_info if not provided
+    victim_info_obj = None
+    ta_info_obj = None
+    if not victim_info:
+        victim_info_obj = config.get('victim')
+    if not ta_info:
+        ta_info_obj = config.get('ta_group')
     reports_dir = os.path.join(case_dir, 'reports')
     enrichment_path = os.path.join(reports_dir, 'enrichment.json')
     # Load enrichment if present
@@ -620,8 +634,8 @@ def report(case_dir, output_html, pii_csv, yara_csv, clamav_csv, victim_info, ta
         clamav_summary=None,  # Add clamav summary if needed
         cross_refs=cross_reference_sensitive_files(yara_csv, pii_csv) if yara_csv and pii_csv and os.path.exists(yara_csv) and os.path.exists(pii_csv) else [],
         opsec_reminder=None,
-        victim_info=victim_info,
-        ta_info=group_info,
+        victim_info=victim_info_obj,
+        ta_info=ta_info_obj,
         template_path=template,
         multi_pii_files=None,
         cert_contacts=cert_contacts,
