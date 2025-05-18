@@ -7,6 +7,7 @@ import subprocess
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ta_dla.utils import get_case_logger
+from ta_dla.db import inventory
 
 YARA_RULES_REPO = 'https://github.com/Yara-Rules/rules.git'
 REVERSINGLABS_RULES_REPO = 'https://github.com/reversinglabs/reversinglabs-yara-rules.git'
@@ -86,21 +87,25 @@ def load_yara_rules(rules_path: str, logger: Optional[logging.Logger] = None):
         return None
 
 
-def scan_file_with_yara(filepath: str, rules, logger: Optional[logging.Logger] = None, ruleset_name: str = "") -> List[Dict]:
+def scan_file_with_yara(filepath: str, rules, logger: Optional[logging.Logger] = None, ruleset_name: str = "", case_dir: Optional[str] = None) -> List[Dict]:
     """
     Scan a single file with YARA rules. Returns a list of findings.
+    Also records findings in the inventory DB if case_dir is provided.
     """
     findings = []
     try:
         matches = rules.match(filepath)
         for match in matches:
-            findings.append({
+            finding = {
                 'file': filepath,
                 'rule': match.rule,
                 'tags': ','.join(match.tags),
                 'meta': str(match.meta),
                 'ruleset': ruleset_name,
-            })
+            }
+            findings.append(finding)
+            if case_dir:
+                inventory.add_malware_hit(case_dir, filepath, match.rule, str(match.meta), f'yara:{ruleset_name}')
     except Exception as e:
         if logger:
             logger.error(f"YARA scan error for {filepath}: {e}")
@@ -118,16 +123,7 @@ def scan_directory_with_yara(
 ) -> int:
     """
     Recursively scan all files in a directory with one or more YARA rulesets. Streams findings to a CSV file.
-    Args:
-        directory: Directory to scan.
-        rulesets: List of ruleset names to use (default: both 'yararules' and 'reversinglabs').
-        output_csv: Path to CSV file for findings.
-        case_dir: Path to the case directory (for logger if not provided).
-        logger: Logger instance for this case.
-        max_workers: Number of parallel workers.
-        batch_size: Number of files to process per batch.
-    Returns:
-        Total number of findings.
+    Also records findings in the inventory DB and updates file status to 'yara-flagged' if any findings are found.
     """
     if logger is None and case_dir:
         logger = get_case_logger(case_dir)
@@ -157,9 +153,11 @@ def scan_directory_with_yara(
                 futures = []
                 for fpath in batch:
                     for ruleset_name, rules in compiled_rules:
-                        futures.append(executor.submit(scan_file_with_yara, fpath, rules, logger, ruleset_name))
+                        futures.append(executor.submit(scan_file_with_yara, fpath, rules, logger, ruleset_name, case_dir))
                 for future in as_completed(futures):
                     findings = future.result()
+                    if findings and case_dir:
+                        inventory.update_analysis_status(case_dir, findings[0]['file'], 'yara-flagged')
                     for row in findings:
                         csv_writer.writerow(row)
                     finding_count += len(findings)

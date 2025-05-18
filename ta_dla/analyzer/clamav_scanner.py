@@ -10,6 +10,7 @@ import logging
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ta_dla.utils import get_case_logger
+from ta_dla.db import inventory
 
 try:
     import clamd
@@ -60,7 +61,7 @@ def get_clamd_client(logger=None):
                 logger.error(f"ClamAV daemon not available: {e2}")
             return None
 
-def scan_file_with_clamav(filepath: str, cd, logger: Optional[logging.Logger] = None) -> Dict:
+def scan_file_with_clamav(filepath: str, cd, logger: Optional[logging.Logger] = None, case_dir: Optional[str] = None) -> Dict:
     result = {
         'file': filepath,
         'status': 'ERROR',
@@ -84,6 +85,9 @@ def scan_file_with_clamav(filepath: str, cd, logger: Optional[logging.Logger] = 
                 result['signature'] = sig if status == 'FOUND' else ''
                 result['scan_method'] = 'clamd'
                 result['engine_version'] = version
+                if status == 'FOUND' and case_dir:
+                    inventory.add_malware_hit(case_dir, filepath, sig, sig, 'clamav')
+                    inventory.update_analysis_status(case_dir, filepath, 'clamav-flagged')
         if logger:
             logger.info(f"ClamAV scan: {filepath} -> {result['status']} {result['signature']}")
     except Exception as e:
@@ -103,6 +107,7 @@ def scan_directory_with_clamav(
 ) -> int:
     """
     Recursively scan all files in a directory with ClamAV. Streams findings to a CSV file.
+    Also records findings in the inventory DB and updates file status to 'clamav-flagged' if any findings are found.
     Args:
         directory: Directory to scan.
         output_csv: Path to CSV file for findings.
@@ -138,7 +143,7 @@ def scan_directory_with_clamav(
         for i in range(0, len(all_files), batch_size):
             batch = all_files[i:i+batch_size]
             with ThreadPoolExecutor(max_workers=max_workers or min(4, os.cpu_count() or 1)) as executor:
-                futures = [executor.submit(scan_file_with_clamav, fpath, cd, logger) for fpath in batch]
+                futures = [executor.submit(scan_file_with_clamav, fpath, cd, logger, case_dir) for fpath in batch]
                 for future in as_completed(futures):
                     result = future.result()
                     csv_writer.writerow(result)
