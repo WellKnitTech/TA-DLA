@@ -17,6 +17,7 @@ from ta_dla.analyzer.reporting import (
 )
 import sys
 from ta_dla.enrichment import RansomwareLiveEnrichment
+from ta_dla.case_manager import CaseManager
 
 def is_mega_url(url: str) -> bool:
     return url.startswith('https://mega.nz/') or url.startswith('https://www.mega.nz/')
@@ -703,6 +704,28 @@ def export_inventory(case_dir, output, format):
         with open(output, 'w', encoding='utf-8') as f:
             _json.dump(downloads, f, indent=2)
         click.echo(f"Exported {len(downloads)} records to {output} (JSON).")
+
+@cli.command()
+@click.option('--case-dir', required=True, type=click.Path(), help='Path to the new case directory')
+def init_case(case_dir):
+    """
+    Initialize a new TA-DLA case: prompt for metadata, create directories, and save case.json.
+    Uses ransomware.live enrichment if available, but allows manual entry if offline.
+    """
+    import click
+    from ta_dla.enrichment import RansomwareLiveEnrichment
+    cm = CaseManager(case_dir)
+    cm.ensure_structure()
+    try:
+        enrichment_client = RansomwareLiveEnrichment()
+    except Exception:
+        enrichment_client = None
+    metadata = CaseManager.prompt_for_case_metadata(enrichment_client=enrichment_client)
+    cm.save_config(metadata)
+    click.echo(f"\nCase initialized at: {case_dir}")
+    click.echo("Case metadata:")
+    for k, v in metadata.items():
+        click.echo(f"  {k}: {v if not isinstance(v, dict) else v.get('name', v)}")
 
 if __name__ == '__main__':
     cli() 
