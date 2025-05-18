@@ -49,7 +49,7 @@ TA-DLA is a **modular Python toolkit** designed to assist DFIR practitioners in 
 Each case is worked within its own `--case-dir`, created and managed by the toolkit.
 
 ```plaintext
-/cases/AcmeCorp_Qilin/
+/cases/<case-dir>/
 ├── scraped/              # Output from scraper modules
 ├── downloads/            # All downloaded leak files
 ├── extracted/            # Fully unpacked contents

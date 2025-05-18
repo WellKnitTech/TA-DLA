@@ -16,10 +16,12 @@ setup(
         'ta_dla.scrapers': [
             'safepay = ta_dla.scraper.safepay:SafepayScraper',
             'dragonforce = ta_dla.scraper.dragonforce_scraper:DragonforceScraper',
+            'akira = ta_dla.scraper.akira_scraper:AkiraScraper',
         ],
         'ta_dla.downloaders': [
             'http = ta_dla.downloader.http_downloader:HTTPDownloader',
             'dragonforce = ta_dla.downloader.dragonforce_downloader:DragonforceDownloader',
+            'bittorrent = ta_dla.downloader.bittorrent_downloader:BitTorrentDownloader',
         ],
     },
     include_package_data=True,
