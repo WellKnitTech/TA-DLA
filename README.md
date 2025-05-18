@@ -5,7 +5,7 @@ TA-DLA is a modular Python toolkit for DFIR practitioners to process, analyze, a
 
 ## Key Features
 - **Plugin-based architecture** for scrapers and downloaders (HTTP, FTP, MEGA, etc.)
-- **Inventory tracking** with SQLite
+- **Inventory tracking** with SQLite (now includes SHA1 hashes for all downloaded files)
 - **Recursive extraction** and analysis
 - **OpSec enforcement** (TOR/SOCKS5, warnings, and checks)
 - **Extensible**: Add new scrapers/downloaders as plugins
@@ -21,7 +21,7 @@ python setup.py develop
 ### 1. Scraping Victim Data
 Scrape links from a TA leak site (index-style or FTP):
 ```
-ta-dla scrape --case-dir /path/to/case --ta qilin --root-url http://qilinleaksite.onion/victim/acm
+ta-dla scrape --case-dir /path/to/case --ta <threat-actor> --root-url http://<onion-site>/<victim-leak-page>
 ```
 - The correct scraper plugin will be auto-selected.
 - For FTP-based leaks, you will be prompted to include/exclude generic FTP links.
@@ -47,10 +47,14 @@ Extract, analyze, and report as before:
 ```
 ta-dla extract --case-dir /path/to/case
 
-ta-dla analyze --case-dir /path/to/case
+ta-dla analyze --case-dir /path/to/case [--skip-sha1]
 
 ta-dla report --case-dir /path/to/case
 ```
+
+- **SHA1 hash calculation is enabled by default** during analysis. All downloaded files will have their SHA1 hashes computed and stored in the inventory database for forensics, legal, and DFIR workflows. This is useful for verifying file integrity, comparing with restored data, and supporting legal/counsel review.
+- Use `--skip-sha1` to explicitly skip hash calculation if not needed.
+- SHA1 calculation is parallelized and resource-friendly, and only processes files that are fully downloaded and missing a hash.
 
 ### 4. Listing Plugins
 See all available scraper and downloader plugins:
@@ -213,4 +217,11 @@ ta-dla download --case-dir /path/to/case
 
 - The scraper will recursively enumerate all files and directories, saving download links to the inventory.
 - The downloader will fetch all pending files using the correct token and path, routing requests through Tor.
-- Both plugins are auto-discovered via the plugin system. 
+- Both plugins are auto-discovered via the plugin system.
+
+## Forensics and Legal/DFIR Support
+- SHA1 hashes are stored in the inventory database for all downloaded files (by default during analysis). This enables:
+  - File integrity verification
+  - Comparison with restored or original data
+  - Legal/counsel review and reporting
+  - Forensic chain-of-custody documentation 

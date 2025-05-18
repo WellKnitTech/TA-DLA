@@ -224,10 +224,12 @@ def load_case_config(case_dir):
 @click.option('--skip-clamav', is_flag=True, default=False, help='Explicitly skip ClamAV scanning (overrides --clamav)')
 @click.option('--ta-group', type=str, default=None, help='Threat Actor group name (will be matched to ransomware.live, or use "unknown")')
 @click.option('--refresh-enrichment', is_flag=True, default=False, help='Force refresh of enrichment data from ransomware.live')
-def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers, yara, yara_output_csv, yara_rulesets, update_yara, clamav, clamav_output_csv, skip_clamav, ta_group, refresh_enrichment):
+@click.option('--skip-sha1', is_flag=True, default=False, help='Skip SHA1 hash calculation (enabled by default)')
+def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers, yara, yara_output_csv, yara_rulesets, update_yara, clamav, clamav_output_csv, skip_clamav, ta_group, refresh_enrichment, skip_sha1):
     """
     Analyze extracted files for PII, PHI, PCI, high-entropy secrets, and (optionally) malware with YARA and ClamAV.
     Outputs findings to CSV files for reporting. Integrates ransomware.live enrichment and YARA rules if available.
+    SHA1 hash calculation is enabled by default for all downloaded files unless --skip-sha1 is set.
     """
     try:
         config = load_case_config(case_dir)
@@ -425,6 +427,42 @@ def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers
         elif clamav and skip_clamav:
             logger.info("ClamAV scan explicitly skipped by user (--skip-clamav)")
             click.echo("ClamAV scan explicitly skipped by user (--skip-clamav)")
+        # SHA1 hash calculation step
+        if not skip_sha1:
+            logger.info("Starting SHA1 hash calculation for all downloaded files...")
+            from ta_dla.db import inventory as inv
+            downloads = inv.get_downloads_by_status(case_dir, 'complete')
+            files_to_hash = [d for d in downloads if not d.get('sha1') and os.path.exists(os.path.join(case_dir, 'downloads', d['filename']))]
+            def compute_sha1(filepath):
+                import hashlib
+                h = hashlib.sha1()
+                with open(filepath, 'rb') as f:
+                    for chunk in iter(lambda: f.read(1024*1024), b''):
+                        h.update(chunk)
+                return h.hexdigest()
+            def hash_task(d):
+                filepath = os.path.join(case_dir, 'downloads', d['filename'])
+                try:
+                    sha1sum = compute_sha1(filepath)
+                    inv.update_download_status(case_dir, d['url'], d['status'], sha1=sha1sum, size=os.path.getsize(filepath))
+                    logger.info(f"SHA1 for {d['filename']}: {sha1sum}")
+                    return (d['filename'], sha1sum, True)
+                except Exception as e:
+                    logger.warning(f"Failed to hash {d['filename']}: {e}")
+                    return (d['filename'], None, False)
+            batch = files_to_hash
+            with ThreadPoolExecutor(max_workers=max_workers or min(4, os.cpu_count() or 1)) as executor:
+                futures = {executor.submit(hash_task, d): d for d in batch}
+                for i, future in enumerate(as_completed(futures)):
+                    fname, sha1sum, ok = future.result()
+                    if ok:
+                        click.echo(f"[SHA1] {fname}: {sha1sum}")
+                    else:
+                        click.echo(f"[SHA1] {fname}: FAILED")
+            logger.info(f"SHA1 hash calculation complete. {len(batch)} files processed.")
+        else:
+            logger.info("SHA1 hash calculation explicitly skipped by user (--skip-sha1)")
+            click.echo("SHA1 hash calculation explicitly skipped by user (--skip-sha1)")
         inventory.add_event(case_dir, 'analyze_end', 'Analysis phase complete')
     except Exception as e:
         click.secho(f"[FATAL] Unexpected error in analyze: {e}", fg='red')
