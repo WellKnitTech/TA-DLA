@@ -1,5 +1,5 @@
 click
-requests
+requests  # For enrichment/ransomware_live.py
 py7zr
 rarfile
 python-dotenv

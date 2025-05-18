@@ -87,6 +87,20 @@ def load_yara_rules(rules_path: str, logger: Optional[logging.Logger] = None):
         return None
 
 
+def load_yara_rules_from_string(rules_str: str, logger: Optional[logging.Logger] = None):
+    """
+    Compile YARA rules from a string (e.g., fetched from ransomware.live).
+    Returns compiled rules object or None.
+    """
+    try:
+        rules = yara.compile(source=rules_str)
+        return rules
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to compile YARA rules from string: {e}")
+        return None
+
+
 def scan_file_with_yara(filepath: str, rules, logger: Optional[logging.Logger] = None, ruleset_name: str = "", case_dir: Optional[str] = None) -> List[Dict]:
     """
     Scan a single file with YARA rules. Returns a list of findings.
@@ -119,11 +133,13 @@ def scan_directory_with_yara(
     case_dir: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
     max_workers: Optional[int] = None,
-    batch_size: int = 32
+    batch_size: int = 32,
+    extra_rules: Optional[List[Tuple[str, any]]] = None,  # (ruleset_name, compiled_rules)
 ) -> int:
     """
     Recursively scan all files in a directory with one or more YARA rulesets. Streams findings to a CSV file.
     Also records findings in the inventory DB and updates file status to 'yara-flagged' if any findings are found.
+    Optionally include extra_rules (e.g., from ransomware.live).
     """
     if logger is None and case_dir:
         logger = get_case_logger(case_dir)
@@ -138,6 +154,8 @@ def scan_directory_with_yara(
             compiled_rules.append((ruleset, rules))
         else:
             logger.error(f"Failed to load ruleset: {ruleset}")
+    if extra_rules:
+        compiled_rules.extend(extra_rules)
     all_files = []
     for root, dirs, files in os.walk(directory):
         for fname in files:

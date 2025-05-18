@@ -1,1 +1,1 @@
- 
+from .ransomware_live import RansomwareLiveEnrichment 
