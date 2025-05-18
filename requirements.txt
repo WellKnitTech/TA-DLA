@@ -10,4 +10,11 @@ yara-python
 pandas
 jinja2
 # Optional: For ClamAV AV scanning
-# pip install clamd 
+# pip install clamd
+beautifulsoup4
+
+# Dev dependencies
+pytest
+pytest-cov
+flake8
+pip-audit 
