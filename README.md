@@ -1,20 +1,25 @@
 # TA-DLA: Threat Actor Data Leak Analyzer
 
-TA-DLA is a modular Python toolkit for DFIR practitioners to process, analyze, and report on ransomware leak data published by threat actor groups. It supports per-case staging, pluggable modules, and automated enrichment from public threat intel APIs.
+TA-DLA is a robust, modular Python toolkit for DFIR practitioners to process, analyze, and report on ransomware leak data published by threat actor groups. It is designed for per-case staging, modular scrapers/downloaders, automated enrichment, and robust reporting, with a strong focus on OpSec (anonymity, no case data in the repo, TOR support, etc.).
 
 ## Features
-- Modular scrapers and downloaders for different TA leak sites
-- Resumable, parallel downloads with inventory tracking
-- Extraction of all major archive formats (including nested)
-- PII/PHI/PCI and malware/YARA scanning
-- Per-case directory structure and SQLite tracking
-- Automated enrichment from Ransomware.live
-- CLI-driven, no GUI dependencies
+- Modular scrapers and downloaders for different TA leak sites (HTTP, FTP, MEGA; all support TOR/OpSec enforcement)
+- Resumable, parallel downloads with granular inventory tracking (SQLite)
+- Extraction of all major archive formats (zip, 7z, rar, tar.gz, gz, bz2; supports passwords and nested extraction)
+- PII/PHI/PCI scanner (regex + entropy, parallelized, batch-processed, CSV output)
+- YARA scanner (multiple rulesets, parallel, CSV output)
+- ClamAV integration (optional, parallelized, with user guidance)
+- Automated enrichment from Ransomware.live API
+- Per-case directory structure and atomic status updates
+- HTML dashboard reporting (Jinja2, OpSec reminders, cross-references, high-risk file highlighting)
+- CLI-driven, no GUI dependencies, with strong OpSec enforcement and reminders
+- Unit/integration tests and robust CI (GitHub Actions)
+- MIT License
 
 ## Usage
 1. Install dependencies: `pip install -r requirements.txt`
 2. Run CLI commands: `python -m ta_dla.cli --help`
-3. Each case is managed in its own directory under `cases/`
+3. Each case is managed in its own directory (e.g., `--case-dir /cases/AcmeCorp_Qilin/`)
 
 See `SoftwareRequirements.MD` for full requirements and workflow.
 
@@ -39,42 +44,61 @@ ta_dla/                  # Main toolkit source code
 requirements.txt         # Python dependencies
 README.md                # Project documentation
 SoftwareRequirements.MD  # Full requirements
+.github/workflows/ci.yml # GitHub Actions CI workflow
+LICENSE                  # MIT License
 ```
 
 To add support for a new threat actor or download method, create a new module in `scraper/` or `downloader/` and update `ta_config.json` for your case.
 
-## Optional: ClamAV Antivirus Scanning
+## CLI Overview
 
-TA-DLA supports scanning files for malware using ClamAV, via the optional [python-clamd](https://pypi.org/project/clamd/) package and a running ClamAV daemon. This is not required for core functionality, but is recommended for additional malware detection.
+TA-DLA provides a modular CLI (via Click) with commands for scraping, downloading, extracting, analyzing, and reporting. All commands enforce OpSec by default (TOR checks, warnings, and bypass flags). Key commands include:
+- `download` / `download_ftp` / `download_http` / `resume_downloads`: Download files from various sources with OpSec enforcement
+- `scrape`: Scrape TA leak sites for download links
+- `extract`: Extract all supported archive types, including nested and password-protected
+- `analyze`: Scan for PII/PHI/PCI, YARA, and ClamAV findings (CSV output)
+- `report`: Generate HTML dashboard and CSV summaries
+- `inventory_status`, `pending_downloads`, `failed_downloads`, `clear_failed_downloads`, `retry_failed_downloads`, `export_inventory`: Inventory and DB management
+- `opsec_check`: Print OpSec reminders and check if TOR is running
 
-### To enable ClamAV scanning:
-1. **Install ClamAV and the daemon:**
-   - **Ubuntu/Debian:**
-     ```sh
-     sudo apt-get install clamav-daemon clamav-freshclam
-     sudo freshclam
-     sudo systemctl start clamav-daemon
-     ```
-   - **Arch/Manjaro:**
-     ```sh
-     sudo pacman -S clamav clamav-daemon
-     sudo freshclam
-     sudo systemctl start clamav-daemon
-     ```
-2. **Install the Python package:**
-   ```sh
-   pip install clamd
-   ```
-3. **Run TA-DLA with ClamAV scanning enabled (CLI integration required).**
+Run `python -m ta_dla.cli --help` for full command details.
 
-If ClamAV or python-clamd is not installed, TA-DLA will skip AV scanning and provide instructions.
+## Reporting & Dashboard
+
+- Generates HTML dashboard (Jinja2) summarizing downloads, findings, cross-references, and OpSec reminders
+- CSV reports for PII/PHI/PCI, YARA, ClamAV, and cross-referenced files
+- Highlights files with multiple types of sensitive data
+- Designed for secure, air-gapped review
 
 ## Inventory Tracking (SQLite)
 
 TA-DLA uses a per-case `inventory.db` (SQLite) to track download, extraction, and analysis status for every file. This enables:
 - Resumable downloads and analysis (even for very large leak sets)
-- Querying failed or pending downloads
-- Tracking extraction and analysis findings
+- Querying failed, pending, or partial downloads
+- Tracking extraction and analysis findings with granular status codes (e.g., `pending`, `in-progress`, `complete`, `failed`, `skipped`, `corrupt`, `password-protected`, `partial`)
 - Reliable reporting and workflow recovery
 
-The database is created automatically in each case directory and is required for robust, large-scale workflows. 
+The database is created automatically in each case directory and is required for robust, large-scale workflows.
+
+## OpSec & Anonymity
+
+- All downloaders and scrapers enforce TOR/SOCKS5 usage for .onion and sensitive sites
+- CLI and reporting include OpSec reminders and warnings
+- MEGA downloads warn if not using system proxying
+- Extraction, download, and analysis phases are robust to OpSec and error handling
+- No case data is ever stored in the repo
+
+## Testing & CI
+
+- Unit and integration tests for core modules (downloaders, extractors, CLI, reporting, etc.)
+- End-to-end workflow tests recommended for contributors
+- GitHub Actions CI: runs linting, security audit, and tests (with coverage) on Python 3.9, 3.10, and 3.11
+- Coverage report uploaded as an artifact on each run
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+For more details, see `SoftwareRequirements.MD` and the in-code documentation. 
