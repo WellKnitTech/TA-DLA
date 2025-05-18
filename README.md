@@ -27,12 +27,34 @@ See `SoftwareRequirements.MD` for full requirements and workflow.
 
 **Important:** TA-DLA never stores case data, downloads, or extracted files inside the toolkit repository. All case data must be stored in a user-specified directory using the `--case-dir` argument. This ensures sensitive data is kept outside the toolkit codebase and can be placed on secure or external storage as needed.
 
+## Case Initialization & Workflow
+
+**Every case should be initialized with the `init-case` command:**
+
+```
+ta-dla init-case --case-dir /cases/AcmeCorp_Qilin/
+```
+- Prompts for victim, threat actor, description, analyst, and date
+- Uses ransomware.live enrichment if available, but allows manual entry if offline
+- Creates a standardized directory structure and saves all metadata in `case.json`
+
+**Typical Case Flow:**
+1. `init-case` — Set up the case directory, metadata, and structure
+2. `scrape` (optional) — Scrape TA leak sites for download links
+3. `download` / `download_ftp` / `download_http` — Download files (uses inventory tracking)
+4. `extract` — Extract all supported archives (nested, password-protected)
+5. `analyze` — Scan for PII/PHI/PCI, YARA, and ClamAV findings (uses metadata from `case.json`)
+6. `report` — Generate HTML dashboard and CSV summaries (uses metadata from `case.json`)
+7. Inventory/DB management as needed
+
+All commands use `case.json` for victim, TA, and other metadata unless overridden by CLI options.
+
 ## Project Structure
 
 ```
 ta_dla/                  # Main toolkit source code
   cli.py                 # CLI entry point
-  case_manager.py        # Case directory/config management
+  case_manager.py        # Case directory/config management (case.json)
   scraper/               # Pluggable scraper modules (per TA)
   downloader/            # Pluggable downloader modules
   extractor/             # Archive extraction logic
@@ -48,16 +70,17 @@ SoftwareRequirements.MD  # Full requirements
 LICENSE                  # MIT License
 ```
 
-To add support for a new threat actor or download method, create a new module in `scraper/` or `downloader/` and update `ta_config.json` for your case.
+To add support for a new threat actor or download method, create a new module in `scraper/` or `downloader/` and update your case's `case.json` as needed.
 
 ## CLI Overview
 
 TA-DLA provides a modular CLI (via Click) with commands for scraping, downloading, extracting, analyzing, and reporting. All commands enforce OpSec by default (TOR checks, warnings, and bypass flags). Key commands include:
+- `init-case`: Initialize a new case, prompt for metadata, create directories, and save `case.json`
 - `download` / `download_ftp` / `download_http` / `resume_downloads`: Download files from various sources with OpSec enforcement
 - `scrape`: Scrape TA leak sites for download links
 - `extract`: Extract all supported archive types, including nested and password-protected
-- `analyze`: Scan for PII/PHI/PCI, YARA, and ClamAV findings (CSV output)
-- `report`: Generate HTML dashboard and CSV summaries
+- `analyze`: Scan for PII/PHI/PCI, YARA, and ClamAV findings (CSV output; uses `case.json` for metadata)
+- `report`: Generate HTML dashboard and CSV summaries (uses `case.json` for metadata)
 - `inventory_status`, `pending_downloads`, `failed_downloads`, `clear_failed_downloads`, `retry_failed_downloads`, `export_inventory`: Inventory and DB management
 - `opsec_check`: Print OpSec reminders and check if TOR is running
 
