@@ -19,6 +19,8 @@ import sys
 from ta_dla.enrichment import RansomwareLiveEnrichment
 from ta_dla.case_manager import CaseManager
 import traceback
+from ta_dla.scraper.plugin_loader import get_scraper_plugins
+from ta_dla.downloader.plugin_loader import get_downloader_plugins
 
 def is_mega_url(url: str) -> bool:
     return url.startswith('https://mega.nz/') or url.startswith('https://www.mega.nz/')
@@ -61,14 +63,14 @@ def cli():
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
-@click.option('--url-list', type=click.Path(), help='Path to a .txt file with one URL per line')
+@click.option('--url-list', type=click.Path(), help='Path to a .txt file with one URL per line (HTTP, FTP, MEGA, etc.)')
 @click.option('--scraper-json', type=click.Path(), help='Path to a JSON file with a list of URLs or dicts with url/filename')
 @click.option('--allow-insecure-mega', is_flag=True, default=False, help='Allow MEGA downloads without TOR (not recommended)')
 @click.option('--ignore-opsec-this-is-a-bad-idea', is_flag=True, default=False, help='Ignore OpSec checks and warnings (NOT RECOMMENDED)')
 def download(case_dir, url_list, scraper_json, allow_insecure_mega, ignore_opsec_this_is_a_bad_idea):
     """
     Download files for the case from a manual URL list or a scraper JSON output.
-    Supports HTTP, FTP, and MEGA links. MEGA downloads require TOR by default.
+    Supports HTTP, FTP, and MEGA links. All downloads use the plugin system.
     """
     try:
         if not opsec_guard(ignore_opsec_this_is_a_bad_idea):
@@ -128,19 +130,17 @@ def download(case_dir, url_list, scraper_json, allow_insecure_mega, ignore_opsec
             output_path = os.path.join(downloads_dir, filename)
             logger.info(f"Starting download: {url} -> {output_path}")
             try:
-                if is_mega_url(url):
-                    click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
-                    success = download_mega_file(url, downloads_dir, case_dir=case_dir, logger=logger, require_tor=not allow_insecure_mega)
-                elif is_ftp_url(url):
-                    click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
-                    logger.warning(f"FTP URL detected: {url}. Please use the dedicated FTP download command or ensure credentials are in metadata.json.")
-                    success = False
+                downloader_plugins = get_downloader_plugins()
+                for plugin in downloader_plugins:
+                    if plugin.supports(None, url):
+                        success = plugin.download(url, output_path, logger=logger, case_dir=case_dir)
+                        break
                 else:
-                    success = http_download_file(url, output_path, logger=logger, case_dir=case_dir)
+                    logger.error(f'No downloader plugin found for URL: {url}')
+                    success = False
             except Exception as e:
                 logger.error(f"Download error for {url}: {e}\n{traceback.format_exc()}")
                 click.secho(f"Error downloading {url}: {e}", fg='red')
-                success = False
             if success:
                 logger.info(f"Successfully downloaded: {url}")
                 try:
@@ -166,39 +166,43 @@ def download(case_dir, url_list, scraper_json, allow_insecure_mega, ignore_opsec
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
-@click.option('--ftp-server', type=str, help='FTP server address')
-@click.option('--ftp-user', type=str, help='FTP username')
-@click.option('--ftp-pass', type=str, help='FTP password')
-@click.option('--ftp-path', type=str, help='Remote FTP file path')
-@click.option('--ignore-opsec-this-is-a-bad-idea', is_flag=True, default=False, help='Ignore OpSec checks and warnings (NOT RECOMMENDED)')
-def download_ftp(case_dir, ftp_server, ftp_user, ftp_pass, ftp_path, ignore_opsec_this_is_a_bad_idea):
+@click.option('--ftp-url-list', type=click.Path(), help='Path to a .txt file with one FTP URL per line (with credentials and path)')
+def download_ftp_urls(case_dir, ftp_url_list):
     """
-    Download files from an FTP server for the case. Credentials and path are required.
+    Download all FTP URLs listed in a text file using the FTP downloader plugin.
+    Each line should be a full FTP URL with credentials and a path.
     """
-    if not opsec_guard(ignore_opsec_this_is_a_bad_idea):
-        return
     downloads_dir = os.path.join(case_dir, 'downloads')
     os.makedirs(downloads_dir, exist_ok=True)
     logger = get_case_logger(case_dir)
-    if not all([ftp_server, ftp_user, ftp_pass, ftp_path]):
-        logger.error('FTP server, user, password, and path are required.')
-        click.echo('FTP server, user, password, and path are required.')
+    if not ftp_url_list:
+        click.secho('No FTP URL list provided.', fg='red')
         return
-    logger.info(f"Starting FTP download: {ftp_server}:{ftp_path}")
-    click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
-    success = download_ftp_files(
-        server=ftp_server,
-        username=ftp_user,
-        password=ftp_pass,
-        remote_path=ftp_path,
-        output_dir=downloads_dir,
-        case_dir=case_dir,
-        logger=logger
-    )
-    if success:
-        logger.info(f"Successfully downloaded from FTP: {ftp_server}:{ftp_path}")
-    else:
-        logger.error(f"Failed to download from FTP: {ftp_server}:{ftp_path}")
+    try:
+        with open(ftp_url_list, 'r') as f:
+            urls = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        click.secho(f"Error reading FTP URL list: {e}", fg='red')
+        logger.error(f"Error reading FTP URL list: {e}\n{traceback.format_exc()}")
+        return
+    downloader_plugins = get_downloader_plugins()
+    ftp_plugin = next((p for p in downloader_plugins if hasattr(p, 'name') and 'ftp' in p.name.lower()), None)
+    if not ftp_plugin:
+        click.secho('No FTP downloader plugin found.', fg='red')
+        return
+    for url in urls:
+        output_path = os.path.join(downloads_dir, url.split('/')[-1] or 'ftp_download')
+        logger.info(f"Starting FTP download: {url} -> {output_path}")
+        try:
+            success = ftp_plugin.download(url, output_path, logger=logger, case_dir=case_dir)
+        except Exception as e:
+            logger.error(f"FTP download error for {url}: {e}\n{traceback.format_exc()}")
+            click.secho(f"Error downloading {url}: {e}", fg='red')
+            success = False
+        if success:
+            logger.info(f"Successfully downloaded: {url}")
+        else:
+            logger.error(f"Failed to download: {url}")
 
 def load_case_config(case_dir):
     cm = CaseManager(case_dir)
@@ -431,10 +435,23 @@ def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
-def scrape(case_dir):
-    """Scrape download links from TA leak sites."""
-    # TODO: Implement scraper logic
-    pass
+@click.option('--ta', required=True, type=str, help='Threat Actor group name (e.g., safepay)')
+@click.option('--root-url', required=True, type=str, help='Root/base URL of the TA leak site or victim directory')
+def scrape(case_dir, ta, root_url):
+    """Scrape download links from TA leak sites using the plugin system."""
+    logger = get_case_logger(case_dir)
+    plugins = get_scraper_plugins()
+    for plugin in plugins:
+        if plugin.supports(ta):
+            logger.info(f"Using scraper plugin: {plugin.name}")
+            try:
+                plugin.scrape_victims(root_url, case_dir)
+                click.secho(f"Scraping complete using {plugin.name}.", fg='green')
+            except Exception as e:
+                logger.error(f"Scraper plugin {plugin.name} failed: {e}\n{traceback.format_exc()}")
+                click.secho(f"Scraper plugin {plugin.name} failed: {e}", fg='red')
+            return
+    click.secho(f"No scraper plugin found for TA: {ta}", fg='red')
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
@@ -553,7 +570,14 @@ def resume_downloads(case_dir, allow_insecure_mega, ignore_opsec_this_is_a_bad_i
             logger.warning(f"FTP URL detected: {url}. Please use the dedicated FTP download command or ensure credentials are in metadata.json.")
             success = False
         else:
-            success = http_download_file(url, output_path, logger=logger, case_dir=case_dir)
+            downloader_plugins = get_downloader_plugins()
+            for plugin in downloader_plugins:
+                if plugin.supports(None, url):
+                    success = plugin.download(url, output_path, logger=logger, case_dir=case_dir)
+                    break
+            else:
+                logger.error(f'No downloader plugin found for URL: {url}')
+                success = False
         if success:
             logger.info(f"Successfully downloaded: {url}")
             size = os.path.getsize(output_path) if os.path.exists(output_path) else None
@@ -593,7 +617,14 @@ def download_http(case_dir, max_workers, ignore_opsec_this_is_a_bad_idea):
         filename = d['filename']
         output_path = filename if os.path.isabs(filename) else os.path.join(downloads_dir, filename)
         logger.info(f"Downloading: {url} -> {output_path}")
-        success = http_download_file(url, output_path, logger=logger, case_dir=case_dir)
+        downloader_plugins = get_downloader_plugins()
+        for plugin in downloader_plugins:
+            if plugin.supports(None, url):
+                success = plugin.download(url, output_path, logger=logger, case_dir=case_dir)
+                break
+        else:
+            logger.error(f'No downloader plugin found for URL: {url}')
+            success = False
         if success:
             logger.info(f"Successfully downloaded: {url}")
             size = os.path.getsize(output_path) if os.path.exists(output_path) else None
@@ -791,6 +822,16 @@ def init_case(case_dir):
     click.echo("Case metadata:")
     for k, v in metadata.items():
         click.echo(f"  {k}: {v if not isinstance(v, dict) else v.get('name', v)}")
+
+@cli.command()
+def list_plugins():
+    """List all available scraper and downloader plugins."""
+    click.echo("Available scraper plugins:")
+    for plugin in get_scraper_plugins():
+        click.echo(f"- {plugin.name} (supports: {', '.join(plugin.supported_tas) if plugin.supported_tas else 'all'})")
+    click.echo("\nAvailable downloader plugins:")
+    for plugin in get_downloader_plugins():
+        click.echo(f"- {plugin.name} (supports: {', '.join(plugin.supported_tas) if plugin.supported_tas else 'all'})")
 
 if __name__ == '__main__':
     cli() 

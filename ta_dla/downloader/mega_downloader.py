@@ -17,14 +17,15 @@ def is_running_under_torsocks() -> bool:
 def download_mega_file(
     url: str,
     output_dir: str,
-    case_dir: Optional[str] = None,
+    case_dir: str = None,
     logger: Optional[logging.Logger] = None,
-    proxy_url: Optional[str] = None,
-    require_tor: bool = True
+    require_tor: bool = True,
+    opsec_guard=None
 ) -> bool:
     """
     Download a file from MEGA.nz using mega.py.
     WARNING: For true anonymity, run this process with torsocks or proxychains, or in a network-isolated environment.
+    If opsec_guard is provided, it will be called before download. If it returns False, abort.
     Args:
         url: MEGA file URL.
         output_dir: Directory to save the downloaded file.
@@ -58,6 +59,10 @@ def download_mega_file(
             logger.warning(warning)
         else:
             print(warning)
+    if opsec_guard and not opsec_guard():
+        if logger:
+            logger.warning('Aborting MEGA download due to OpSec policy.')
+        return False
     try:
         mega = Mega()
         # TODO: Add proxy support if mega.py or pycryptodome supports it

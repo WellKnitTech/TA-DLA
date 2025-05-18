@@ -1,6 +1,80 @@
 # TA-DLA: Threat Actor Data Leak Analyzer
 
-TA-DLA is a robust, modular Python toolkit for DFIR practitioners to process, analyze, and report on ransomware leak data published by threat actor groups. It is designed for per-case staging, modular scrapers/downloaders, automated enrichment, and robust reporting, with a strong focus on OpSec (anonymity, no case data in the repo, TOR support, etc.).
+## Overview
+TA-DLA is a modular Python toolkit for DFIR practitioners to process, analyze, and report on ransomware leak data. It supports scraping, downloading, extracting, analyzing, and reporting on data from a variety of leak site formats, with a strong focus on OpSec and extensibility via a plugin system.
+
+## Key Features
+- **Plugin-based architecture** for scrapers and downloaders (HTTP, FTP, MEGA, etc.)
+- **Inventory tracking** with SQLite
+- **Recursive extraction** and analysis
+- **OpSec enforcement** (TOR/SOCKS5, warnings, and checks)
+- **Extensible**: Add new scrapers/downloaders as plugins
+
+## Installation
+```
+pip install -r requirements.txt
+python setup.py develop
+```
+
+## Usage
+
+### 1. Scraping Victim Data
+Scrape links from a TA leak site (index-style or FTP):
+```
+ta-dla scrape --case-dir /path/to/case --ta qilin --root-url http://qilinleaksite.onion/victim/acm
+```
+- The correct scraper plugin will be auto-selected.
+- For FTP-based leaks, you will be prompted to include/exclude generic FTP links.
+
+### 2. Downloading Files
+Download all files in the inventory (from scraping or manual input):
+```
+ta-dla download --case-dir /path/to/case
+```
+Or, download from a text file of URLs (HTTP, FTP, MEGA, etc.):
+```
+ta-dla download --case-dir /path/to/case --url-list urls.txt
+```
+
+#### Downloading FTP URLs Directly
+If you have a text file of FTP URLs (with credentials and path):
+```
+ta-dla download-ftp-urls --case-dir /path/to/case --ftp-url-list ftp_urls.txt
+```
+
+### 3. Extraction, Analysis, and Reporting
+Extract, analyze, and report as before:
+```
+ta-dla extract --case-dir /path/to/case
+
+ta-dla analyze --case-dir /path/to/case
+
+ta-dla report --case-dir /path/to/case
+```
+
+### 4. Listing Plugins
+See all available scraper and downloader plugins:
+```
+ta-dla list-plugins
+```
+
+## OpSec Notes
+- All downloads are routed through TOR/SOCKS5 by default.
+- You will be warned if OpSec is at risk (e.g., MEGA without TOR).
+- Always review findings in a secure, air-gapped environment.
+
+## Extending TA-DLA
+- Add new scrapers or downloaders by implementing the appropriate base class and registering via `setup.py` entry points.
+- See `ta_dla/scraper/base.py` and `ta_dla/downloader/base.py` for interfaces.
+
+## Example FTP URL Format
+```
+ftp://username:password@host/path/to/victim
+```
+- Victim-specific FTP links are preferred; generic links are optional and analyst-controlled.
+
+## Questions?
+See the documentation or use `--help` on any command for more details.
 
 ## Features
 - Modular scrapers and downloaders for different TA leak sites (HTTP, FTP, MEGA; all support TOR/OpSec enforcement)
@@ -15,13 +89,6 @@ TA-DLA is a robust, modular Python toolkit for DFIR practitioners to process, an
 - CLI-driven, no GUI dependencies, with strong OpSec enforcement and reminders
 - Unit/integration tests and robust CI (GitHub Actions)
 - MIT License
-
-## Usage
-1. Install dependencies: `pip install -r requirements.txt`
-2. Run CLI commands: `python -m ta_dla.cli --help`
-3. Each case is managed in its own directory (e.g., `--case-dir /cases/AcmeCorp_Qilin/`)
-
-See `SoftwareRequirements.MD` for full requirements and workflow.
 
 ## Case Data Storage
 

@@ -8,7 +8,7 @@ import gzip
 import bz2
 from typing import Optional, List, Union
 from ta_dla.utils import get_case_logger
-import ta_dla.db.inventory as inventory
+from ta_dla.db import inventory
 
 def extract_all_archives(
     input_dir: str,
@@ -64,12 +64,16 @@ def extract_all_archives(
                                     continue
                             if not extracted:
                                 logger.error(f"Failed to extract password-protected ZIP: {fpath}")
+                                inventory.update_download_status(case_dir, out_path, 'password-protected')
                                 continue
                         else:
                             zf.extractall(os.path.dirname(out_path))
                             logger.info(f"Extracted ZIP: {fpath}")
                         extract_all_archives(os.path.dirname(out_path), output_dir, case_dir, logger, depth+1, max_depth, passwords)
-                        inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        result = inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        if not result:
+                            logger.warning('Failed to add extracted file to inventory DB')
+                            print('Warning: Failed to add extracted file to inventory DB')
                 # RAR
                 elif rarfile.is_rarfile(fpath):
                     with rarfile.RarFile(fpath) as rf:
@@ -85,12 +89,16 @@ def extract_all_archives(
                                     continue
                             if not extracted:
                                 logger.error(f"Failed to extract password-protected RAR: {fpath}")
+                                inventory.update_download_status(case_dir, out_path, 'password-protected')
                                 continue
                         else:
                             rf.extractall(os.path.dirname(out_path))
                             logger.info(f"Extracted RAR: {fpath}")
                         extract_all_archives(os.path.dirname(out_path), output_dir, case_dir, logger, depth+1, max_depth, passwords)
-                        inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        result = inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        if not result:
+                            logger.warning('Failed to add extracted file to inventory DB')
+                            print('Warning: Failed to add extracted file to inventory DB')
                 # 7z
                 elif fpath.endswith('.7z'):
                     extracted = False
@@ -105,19 +113,27 @@ def extract_all_archives(
                             continue
                         except Exception as e:
                             logger.error(f"7z extraction error for {fpath}: {e}")
+                            inventory.update_download_status(case_dir, out_path, 'corrupt')
                             break
                     if not extracted:
                         logger.error(f"Failed to extract 7z: {fpath}")
+                        inventory.update_download_status(case_dir, out_path, 'corrupt')
                         continue
                     extract_all_archives(os.path.dirname(out_path), output_dir, case_dir, logger, depth+1, max_depth, passwords)
-                    inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                    result = inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                    if not result:
+                        logger.warning('Failed to add extracted file to inventory DB')
+                        print('Warning: Failed to add extracted file to inventory DB')
                 # TAR
                 elif tarfile.is_tarfile(fpath):
                     with tarfile.open(fpath) as tf:
                         tf.extractall(os.path.dirname(out_path))
                         logger.info(f"Extracted TAR: {fpath}")
                         extract_all_archives(os.path.dirname(out_path), output_dir, case_dir, logger, depth+1, max_depth, passwords)
-                        inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        result = inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        if not result:
+                            logger.warning('Failed to add extracted file to inventory DB')
+                            print('Warning: Failed to add extracted file to inventory DB')
                 # GZ (single file)
                 elif fpath.endswith('.gz') and not tarfile.is_tarfile(fpath):
                     try:
@@ -126,7 +142,11 @@ def extract_all_archives(
                         logger.info(f"Extracted GZ: {fpath}")
                     except Exception as e:
                         logger.error(f"GZ extraction failed for {fpath}: {e}")
-                    inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        inventory.update_download_status(case_dir, out_path, 'corrupt')
+                    result = inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                    if not result:
+                        logger.warning('Failed to add extracted file to inventory DB')
+                        print('Warning: Failed to add extracted file to inventory DB')
                 # BZ2 (single file)
                 elif fpath.endswith('.bz2'):
                     try:
@@ -135,8 +155,13 @@ def extract_all_archives(
                         logger.info(f"Extracted BZ2: {fpath}")
                     except Exception as e:
                         logger.error(f"BZ2 extraction failed for {fpath}: {e}")
-                    inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                        inventory.update_download_status(case_dir, out_path, 'corrupt')
+                    result = inventory.add_extracted_file(case_dir, out_path, fpath, depth)
+                    if not result:
+                        logger.warning('Failed to add extracted file to inventory DB')
+                        print('Warning: Failed to add extracted file to inventory DB')
                 # TODO: Add more formats as needed
             except Exception as e:
                 if logger:
-                    logger.error(f"Extraction failed for {fpath}: {e}") 
+                    logger.error(f"Extraction failed for {fpath}: {e}")
+                    inventory.update_download_status(case_dir, out_path, 'corrupt') 
