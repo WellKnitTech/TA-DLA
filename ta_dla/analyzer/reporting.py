@@ -2,6 +2,8 @@ import os
 import csv
 from collections import defaultdict, Counter
 from typing import List, Dict, Any, Optional
+from jinja2 import Environment, FileSystemLoader, select_autoescape, Template
+import json
 
 def summarize_downloads(downloads: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -198,5 +200,193 @@ def yara_html_report(summary: Dict, output_html: str):
     """
     # TODO: Implement with jinja2 templates
     pass
+
+def per_file_pii_type_summary(findings_csv: str) -> dict:
+    """Return a dict mapping file -> set of PII/PHI/PCI types detected in that file."""
+    import csv
+    file_types = {}
+    with open(findings_csv, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            file = row['file']
+            typ = row['type']
+            if typ in ('PII', 'PHI', 'PCI'):
+                file_types.setdefault(file, set()).add(typ)
+    return file_types
+
+def files_with_multiple_pii_types(file_types: dict) -> list:
+    """Return a list of files with more than one PII/PHI/PCI type."""
+    return [f for f, types in file_types.items() if len(types) > 1]
+
+def generate_html_dashboard(
+    output_html: str,
+    download_stats: Dict[str, Any],
+    pii_stats: Dict[str, int],
+    yara_summary: Dict[str, Any],
+    clamav_summary: Optional[Dict[str, Any]],
+    cross_refs: List[str],
+    opsec_reminder: str = None,
+    victim_info: Optional[Dict[str, Any]] = None,
+    ta_info: Optional[Dict[str, Any]] = None,
+    template_path: Optional[str] = None,
+    multi_pii_files: Optional[list] = None,
+    cert_contacts: Optional[list] = None,
+    enrichment_path: Optional[str] = None,
+    yara_rules_used: Optional[bool] = None
+):
+    """
+    Generate a summary HTML dashboard for the case using Jinja2.
+    Args:
+        output_html: Path to write HTML file.
+        download_stats: Output of summarize_downloads.
+        pii_stats: Output of summarize_pii_phi_pci.
+        yara_summary: Output of yara_summary_report.
+        clamav_summary: Dict with ClamAV summary (optional).
+        cross_refs: List of files flagged by both YARA and PII/PHI/PCI.
+        opsec_reminder: String with OpSec reminders.
+        victim_info: Dict with victim metadata.
+        ta_info: Dict with TA metadata.
+        template_path: Optional path to a Jinja2 template file.
+        multi_pii_files: Optional list of files with multiple PII/PHI/PCI types.
+        cert_contacts: Optional list of CERT contacts.
+        enrichment_path: Optional path to enrichment.json.
+        yara_rules_used: True if ransomware.live YARA rules were used.
+    """
+    # Load enrichment if not provided
+    if enrichment_path and os.path.exists(enrichment_path):
+        with open(enrichment_path, 'r', encoding='utf-8') as f:
+            enrichment = json.load(f)
+        if not ta_info:
+            ta_info = enrichment.get('group')
+        if not cert_contacts:
+            cert_contacts = enrichment.get('cert_contacts')
+        if yara_rules_used is None:
+            yara_rules_used = bool(enrichment.get('yara_rules') and 'rule ' in enrichment.get('yara_rules'))
+    if not opsec_reminder:
+        opsec_reminder = (
+            "<b>OpSec Reminder:</b> Always use TOR for .onion sites. Never upload case data to public repos. "
+            "Review all findings in a secure, air-gapped environment."
+        )
+    if template_path and os.path.exists(template_path):
+        env = Environment(
+            loader=FileSystemLoader(os.path.dirname(template_path)),
+            autoescape=select_autoescape(['html', 'xml'])
+        )
+        template = env.get_template(os.path.basename(template_path))
+    else:
+        # Simple default template
+        template = Template('''
+        <html>
+        <head><title>TA-DLA Case Dashboard</title>
+        <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        h1 { color: #2c3e50; }
+        .section { margin-bottom: 2em; }
+        .opsec { background: #ffeeba; padding: 1em; border-radius: 5px; margin-bottom: 2em; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 0.5em; }
+        th { background: #f8f9fa; }
+        </style>
+        </head>
+        <body>
+        <h1>TA-DLA Case Dashboard</h1>
+        <div class="opsec">{{ opsec_reminder|safe }}</div>
+        <div class="section">
+            <h2>Case Info</h2>
+            <ul>
+                <li><b>Victim:</b> {{ victim_info.name if victim_info else 'Unknown' }}</li>
+                <li><b>Threat Actor:</b> {{ ta_info.name if ta_info else (victim_info.group if victim_info else 'Unknown') }}</li>
+                <li><b>Date Listed:</b> {{ victim_info.date if victim_info else 'Unknown' }}</li>
+            </ul>
+        </div>
+        <div class="section">
+            <h2>Download Status</h2>
+            <ul>
+                <li><b>Total files:</b> {{ download_stats.total_count }}</li>
+                <li><b>Completed:</b> {{ download_stats.completed_count }}</li>
+                <li><b>Failed:</b> {{ download_stats.failed_count }}</li>
+                <li><b>Total size:</b> {{ '%.2f' % (download_stats.total_size_bytes / (1024*1024)) }} MB</li>
+            </ul>
+        </div>
+        <div class="section">
+            <h2>PII/PHI/PCI Findings</h2>
+            <ul>
+                <li><b>PII:</b> {{ pii_stats.PII }}</li>
+                <li><b>PHI:</b> {{ pii_stats.PHI }}</li>
+                <li><b>PCI:</b> {{ pii_stats.PCI }}</li>
+            </ul>
+        </div>
+        <div class="section">
+            <h2>High-Risk Files: Multiple PII/PHI/PCI Types</h2>
+            {% if multi_pii_files %}
+            <ul>
+            {% for f in multi_pii_files %}<li>{{ f }}</li>{% endfor %}
+            </ul>
+            {% else %}
+            <p>None.</p>
+            {% endif %}
+        </div>
+        <div class="section">
+            <h2>YARA/ClamAV Summary</h2>
+            <ul>
+                <li><b>YARA Total Hits:</b> {{ yara_summary.total_hits }}</li>
+                <li><b>YARA Unique Files Flagged:</b> {{ yara_summary.unique_files_flagged }}</li>
+                {% if clamav_summary %}
+                <li><b>ClamAV Infected Files:</b> {{ clamav_summary.infected_files }}</li>
+                {% endif %}
+                {% if yara_rules_used %}
+                <li><b>Custom YARA rules from ransomware.live were used for this group.</b></li>
+                {% endif %}
+            </ul>
+            <h3>Top YARA Rules</h3>
+            <table><tr><th>Rule</th><th>Count</th></tr>
+            {% for rule, count in yara_summary.top_rules %}
+            <tr><td>{{ rule }}</td><td>{{ count }}</td></tr>
+            {% endfor %}
+            </table>
+        </div>
+        <div class="section">
+            <h2>Cross-Referenced Files (Flagged by Both YARA and PII/PHI/PCI)</h2>
+            {% if cross_refs %}
+            <ul>
+            {% for f in cross_refs %}<li>{{ f }}</li>{% endfor %}
+            </ul>
+            {% else %}
+            <p>None.</p>
+            {% endif %}
+        </div>
+        <div class="section">
+            <h2>About the Threat Actor</h2>
+            <p>{{ ta_info.summary if ta_info else '' }}</p>
+        </div>
+        <div class="section">
+            <h2>National CERT/CSIRT Contacts</h2>
+            {% if cert_contacts %}
+            <ul>
+            {% for cert in cert_contacts %}
+                <li><b>{{ cert.team_full or cert.team }}</b> ({{ cert.country }}): <a href="{{ cert.website }}">{{ cert.website }}</a> | {{ cert.email }}</li>
+            {% endfor %}
+            </ul>
+            {% else %}
+            <p>No CERT/CSIRT contacts available.</p>
+            {% endif %}
+        </div>
+        </body></html>
+        ''')
+    html = template.render(
+        download_stats=download_stats,
+        pii_stats=pii_stats,
+        yara_summary=yara_summary,
+        clamav_summary=clamav_summary,
+        cross_refs=cross_refs,
+        opsec_reminder=opsec_reminder,
+        victim_info=victim_info,
+        ta_info=ta_info,
+        multi_pii_files=multi_pii_files or [],
+        cert_contacts=cert_contacts,
+        yara_rules_used=yara_rules_used,
+    )
+    with open(output_html, 'w', encoding='utf-8') as f:
+        f.write(html)
 
 # TODO: Add functions to output HTML and CSV reports 
