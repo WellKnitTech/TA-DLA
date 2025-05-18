@@ -15,9 +15,11 @@ setup(
     entry_points={
         'ta_dla.scrapers': [
             'safepay = ta_dla.scraper.safepay:SafepayScraper',
+            'dragonforce = ta_dla.scraper.dragonforce_scraper:DragonforceScraper',
         ],
         'ta_dla.downloaders': [
             'http = ta_dla.downloader.http_downloader:HTTPDownloader',
+            'dragonforce = ta_dla.downloader.dragonforce_downloader:DragonforceDownloader',
         ],
     },
     include_package_data=True,

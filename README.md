@@ -191,4 +191,26 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 ---
 
-For more details, see `SoftwareRequirements.MD` and the in-code documentation. 
+For more details, see `SoftwareRequirements.MD` and the in-code documentation.
+
+## Dragonforce Scraper & Downloader
+
+TA-DLA now supports Dragonforce-style leak sites with a dedicated scraper and downloader plugin.
+
+### Usage Example
+
+1. Scrape all files from a Dragonforce leak site:
+
+```
+ta-dla scrape --case-dir /path/to/case --ta dragonforce --root-url http://<dragonforce-onion-site>/<victim-leak-page>
+```
+
+2. Download all enumerated files (via Tor):
+
+```
+ta-dla download --case-dir /path/to/case
+```
+
+- The scraper will recursively enumerate all files and directories, saving download links to the inventory.
+- The downloader will fetch all pending files using the correct token and path, routing requests through Tor.
+- Both plugins are auto-discovered via the plugin system. 
