@@ -18,6 +18,7 @@ from ta_dla.analyzer.reporting import (
 import sys
 from ta_dla.enrichment import RansomwareLiveEnrichment
 from ta_dla.case_manager import CaseManager
+import traceback
 
 def is_mega_url(url: str) -> bool:
     return url.startswith('https://mega.nz/') or url.startswith('https://www.mega.nz/')
@@ -69,71 +70,99 @@ def download(case_dir, url_list, scraper_json, allow_insecure_mega, ignore_opsec
     Download files for the case from a manual URL list or a scraper JSON output.
     Supports HTTP, FTP, and MEGA links. MEGA downloads require TOR by default.
     """
-    if not opsec_guard(ignore_opsec_this_is_a_bad_idea):
-        return
-    downloads_dir = os.path.join(case_dir, 'downloads')
-    os.makedirs(downloads_dir, exist_ok=True)
-    logger = get_case_logger(case_dir)
-    # Initialize inventory DB
-    inventory.init_inventory_db(case_dir)
-    inventory.add_event(case_dir, 'download_start', 'Starting download phase')
-    urls = []
-    if url_list:
-        with open(url_list, 'r') as f:
-            for line in f:
-                url = line.strip()
-                if url:
-                    urls.append({'url': url})
-    if scraper_json:
-        with open(scraper_json, 'r') as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and 'url' in item:
-                        urls.append(item)
-                    elif isinstance(item, str):
-                        urls.append({'url': item})
-    if not urls:
-        logger.error('No URLs found to download.')
-        click.echo('No URLs found to download.')
-        return
-    # Add all URLs to inventory as pending
-    for item in urls:
-        url = item['url']
-        filename = item.get('filename') or url.split('/')[-1] or 'downloaded_file'
-        success = inventory.add_download(case_dir, url, filename, status='pending')
-        if not success:
-            logger.warning('Failed to add download to inventory DB')
-            click.echo('Warning: Failed to add download to inventory DB')
-    for item in urls:
-        url = item['url']
-        filename = item.get('filename') or url.split('/')[-1] or 'downloaded_file'
-        output_path = os.path.join(downloads_dir, filename)
-        logger.info(f"Starting download: {url} -> {output_path}")
-        if is_mega_url(url):
-            click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
-            success = download_mega_file(url, downloads_dir, case_dir=case_dir, logger=logger, require_tor=not allow_insecure_mega)
-        elif is_ftp_url(url):
-            click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
-            logger.warning(f"FTP URL detected: {url}. Please use the dedicated FTP download command or ensure credentials are in metadata.json.")
-            success = False
-        else:
-            success = http_download_file(url, output_path, logger=logger, case_dir=case_dir)
-        if success:
-            logger.info(f"Successfully downloaded: {url}")
-            # Update inventory
-            size = os.path.getsize(output_path) if os.path.exists(output_path) else None
-            success = inventory.update_download_status(case_dir, url, 'complete', size=size)
+    try:
+        if not opsec_guard(ignore_opsec_this_is_a_bad_idea):
+            return
+        downloads_dir = os.path.join(case_dir, 'downloads')
+        os.makedirs(downloads_dir, exist_ok=True)
+        logger = get_case_logger(case_dir)
+        # Initialize inventory DB
+        inventory.init_inventory_db(case_dir)
+        inventory.add_event(case_dir, 'download_start', 'Starting download phase')
+        urls = []
+        if url_list:
+            try:
+                with open(url_list, 'r') as f:
+                    for line in f:
+                        url = line.strip()
+                        if url:
+                            urls.append({'url': url})
+            except Exception as e:
+                click.secho(f"Error reading URL list: {e}", fg='red')
+                logger.error(f"Error reading URL list: {e}\n{traceback.format_exc()}")
+                return
+        if scraper_json:
+            try:
+                with open(scraper_json, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict) and 'url' in item:
+                                urls.append(item)
+                            elif isinstance(item, str):
+                                urls.append({'url': item})
+            except Exception as e:
+                click.secho(f"Error reading scraper JSON: {e}", fg='red')
+                logger.error(f"Error reading scraper JSON: {e}\n{traceback.format_exc()}")
+                return
+        if not urls:
+            logger.error('No URLs found to download.')
+            click.secho('No URLs found to download.', fg='red')
+            return
+        # Add all URLs to inventory as pending
+        for item in urls:
+            url = item['url']
+            filename = item.get('filename') or url.split('/')[-1] or 'downloaded_file'
+            try:
+                success = inventory.add_download(case_dir, url, filename, status='pending')
+            except Exception as e:
+                logger.error(f"add_download error: {e}\n{traceback.format_exc()}")
+                click.secho(f"Error adding download to inventory: {e}", fg='red')
+                continue
             if not success:
-                logger.warning('Failed to update download status in inventory DB')
-                click.echo('Warning: Failed to update download status in inventory DB')
+                logger.warning('Failed to add download to inventory DB')
+                click.secho('Warning: Failed to add download to inventory DB', fg='yellow')
+        for item in urls:
+            url = item['url']
+            filename = item.get('filename') or url.split('/')[-1] or 'downloaded_file'
+            output_path = os.path.join(downloads_dir, filename)
+            logger.info(f"Starting download: {url} -> {output_path}")
+            try:
+                if is_mega_url(url):
+                    click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
+                    success = download_mega_file(url, downloads_dir, case_dir=case_dir, logger=logger, require_tor=not allow_insecure_mega)
+                elif is_ftp_url(url):
+                    click.echo("OpSec Warning: Always use TOR for .onion sites and all downloads.")
+                    logger.warning(f"FTP URL detected: {url}. Please use the dedicated FTP download command or ensure credentials are in metadata.json.")
+                    success = False
+                else:
+                    success = http_download_file(url, output_path, logger=logger, case_dir=case_dir)
+            except Exception as e:
+                logger.error(f"Download error for {url}: {e}\n{traceback.format_exc()}")
+                click.secho(f"Error downloading {url}: {e}", fg='red')
+                success = False
+            if success:
+                logger.info(f"Successfully downloaded: {url}")
+                try:
+                    size = os.path.getsize(output_path) if os.path.exists(output_path) else None
+                    success = inventory.update_download_status(case_dir, url, 'complete', size=size)
+                except Exception as e:
+                    logger.warning(f"Failed to update download status in inventory DB: {e}\n{traceback.format_exc()}")
+                    click.secho('Warning: Failed to update download status in inventory DB', fg='yellow')
+            else:
+                logger.error(f"Failed to download: {url}")
+                try:
+                    success = inventory.update_download_status(case_dir, url, 'failed', error='Download failed')
+                except Exception as e:
+                    logger.warning(f"Failed to update download status in inventory DB: {e}\n{traceback.format_exc()}")
+                    click.secho('Warning: Failed to update download status in inventory DB', fg='yellow')
+        inventory.add_event(case_dir, 'download_end', 'Download phase complete')
+    except Exception as e:
+        click.secho(f"[FATAL] Unexpected error in download: {e}", fg='red')
+        if 'logger' in locals():
+            logger.error(f"[FATAL] Unexpected error in download: {e}\n{traceback.format_exc()}")
         else:
-            logger.error(f"Failed to download: {url}")
-            success = inventory.update_download_status(case_dir, url, 'failed', error='Download failed')
-            if not success:
-                logger.warning('Failed to update download status in inventory DB')
-                click.echo('Warning: Failed to update download status in inventory DB')
-    inventory.add_event(case_dir, 'download_end', 'Download phase complete')
+            print(traceback.format_exc())
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
@@ -196,196 +225,209 @@ def analyze(case_dir, victim, extracted_dir, output_csv, batch_size, max_workers
     Analyze extracted files for PII, PHI, PCI, high-entropy secrets, and (optionally) malware with YARA and ClamAV.
     Outputs findings to CSV files for reporting. Integrates ransomware.live enrichment and YARA rules if available.
     """
-    config = load_case_config(case_dir)
-    # Use case.json as default for victim and ta_group
-    if not victim:
-        victim = (config.get('victim', {}) or {}).get('name') or config.get('victim_name')
-    if not ta_group:
-        ta_group = config.get('ta_group') or config.get('group_name')
-    logger = get_case_logger(case_dir)
-    inventory.init_inventory_db(case_dir)
-    inventory.add_event(case_dir, 'analyze_start', 'Starting analysis phase')
-    if not extracted_dir:
-        extracted_dir = os.path.join(case_dir, 'extracted')
-    reports_dir = os.path.join(case_dir, 'reports')
-    os.makedirs(reports_dir, exist_ok=True)
-    enrichment_path = os.path.join(reports_dir, 'enrichment.json')
-    enrichment = None
-    group_info = None
-    yara_rules_str = None
-    cert_contacts = None
-    victim_info = None
-    enrichment_client = RansomwareLiveEnrichment(logger=logger)
-    # Prompt for victim name if not provided
-    if victim is None:
-        recent_victims = enrichment_client.get_recent_victims() or []
-        victim_names = [v['victim'] for v in recent_victims if 'victim' in v]
-        click.echo("Recent victims from ransomware.live:")
-        click.echo(", ".join(sorted(victim_names)[:30]) + (", ..." if len(victim_names) > 30 else ""))
-        victim = click.prompt('Enter victim/organization name (or "unknown")', default='unknown')
-    else:
-        recent_victims = enrichment_client.get_recent_victims() or []
-        victim_names = [v['victim'] for v in recent_victims if 'victim' in v]
-    matched_victim = None
-    if victim and victim.lower() != 'unknown':
-        for v in recent_victims:
-            if victim.lower() == v['victim'].lower():
-                matched_victim = v
-                break
-        if not matched_victim:
+    try:
+        config = load_case_config(case_dir)
+        # Use case.json as default for victim and ta_group
+        if not victim:
+            victim = (config.get('victim', {}) or {}).get('name') or config.get('victim_name')
+        if not ta_group:
+            ta_group = config.get('ta_group') or config.get('group_name')
+        logger = get_case_logger(case_dir)
+        inventory.init_inventory_db(case_dir)
+        inventory.add_event(case_dir, 'analyze_start', 'Starting analysis phase')
+        if not extracted_dir:
+            extracted_dir = os.path.join(case_dir, 'extracted')
+        reports_dir = os.path.join(case_dir, 'reports')
+        os.makedirs(reports_dir, exist_ok=True)
+        # Check for incomplete analysis (e.g., partial CSVs or DB status)
+        if os.path.exists(os.path.join(reports_dir, 'pii.csv')) or os.path.exists(os.path.join(reports_dir, 'malware.csv')):
+            click.secho("Warning: Analysis output already exists. Resume or restart analysis?", fg='yellow')
+            if not click.confirm('Continue and resume analysis (recommended)?', default=True):
+                click.secho('Analysis aborted by user.', fg='red')
+                return
+        enrichment_path = os.path.join(reports_dir, 'enrichment.json')
+        enrichment = None
+        group_info = None
+        yara_rules_str = None
+        cert_contacts = None
+        victim_info = None
+        enrichment_client = RansomwareLiveEnrichment(logger=logger)
+        # Prompt for victim name if not provided
+        if victim is None:
+            recent_victims = enrichment_client.get_recent_victims() or []
+            victim_names = [v['victim'] for v in recent_victims if 'victim' in v]
+            click.echo("Recent victims from ransomware.live:")
+            click.echo(", ".join(sorted(victim_names)[:30]) + (", ..." if len(victim_names) > 30 else ""))
+            victim = click.prompt('Enter victim/organization name (or "unknown")', default='unknown')
+        else:
+            recent_victims = enrichment_client.get_recent_victims() or []
+            victim_names = [v['victim'] for v in recent_victims if 'victim' in v]
+        matched_victim = None
+        if victim and victim.lower() != 'unknown':
             for v in recent_victims:
-                if victim.lower() in v['victim'].lower():
+                if victim.lower() == v['victim'].lower():
                     matched_victim = v
                     break
-        if not matched_victim:
-            click.echo(f"Victim '{victim}' not found in recent ransomware.live data. Proceeding as 'unknown'.")
+            if not matched_victim:
+                for v in recent_victims:
+                    if victim.lower() in v['victim'].lower():
+                        matched_victim = v
+                        break
+            if not matched_victim:
+                click.echo(f"Victim '{victim}' not found in recent ransomware.live data. Proceeding as 'unknown'.")
+                victim = 'unknown'
+        else:
             victim = 'unknown'
-    else:
-        victim = 'unknown'
-    if matched_victim:
-        victim_info = matched_victim
-    else:
-        victim_info = {'name': victim}
-    # ... existing group enrichment logic ...
-    if ta_group is None:
-        groups = enrichment_client.get_groups() or []
-        group_names = [g['name'] for g in groups if 'name' in g]
-        click.echo("Known Threat Actor groups from ransomware.live:")
-        click.echo(", ".join(sorted(group_names)))
-        ta_group = click.prompt('Enter Threat Actor group name (or "unknown")', default='unknown')
-    else:
-        groups = enrichment_client.get_groups() or []
-        group_names = [g['name'] for g in groups if 'name' in g]
-    matched_group = None
-    if ta_group and ta_group.lower() != 'unknown':
-        for g in groups:
-            if ta_group.lower() == g['name'].lower():
-                matched_group = g['name']
-                break
-        if not matched_group:
+        if matched_victim:
+            victim_info = matched_victim
+        else:
+            victim_info = {'name': victim}
+        # ... existing group enrichment logic ...
+        if ta_group is None:
+            groups = enrichment_client.get_groups() or []
+            group_names = [g['name'] for g in groups if 'name' in g]
+            click.echo("Known Threat Actor groups from ransomware.live:")
+            click.echo(", ".join(sorted(group_names)))
+            ta_group = click.prompt('Enter Threat Actor group name (or "unknown")', default='unknown')
+        else:
+            groups = enrichment_client.get_groups() or []
+            group_names = [g['name'] for g in groups if 'name' in g]
+        matched_group = None
+        if ta_group and ta_group.lower() != 'unknown':
             for g in groups:
-                if ta_group.lower() in g['name'].lower():
+                if ta_group.lower() == g['name'].lower():
                     matched_group = g['name']
                     break
-        if not matched_group:
-            click.echo(f"Group '{ta_group}' not found in ransomware.live. Proceeding as 'unknown'.")
+            if not matched_group:
+                for g in groups:
+                    if ta_group.lower() in g['name'].lower():
+                        matched_group = g['name']
+                        break
+            if not matched_group:
+                click.echo(f"Group '{ta_group}' not found in ransomware.live. Proceeding as 'unknown'.")
+                ta_group = 'unknown'
+        else:
             ta_group = 'unknown'
-    else:
-        ta_group = 'unknown'
-    enrichment_data = {}
-    if (victim != 'unknown' or ta_group != 'unknown') and (refresh_enrichment or not os.path.exists(enrichment_path)):
-        group_info = enrichment_client.get_group(matched_group or ta_group) if ta_group != 'unknown' else None
-        yara_rules_str = enrichment_client.get_yara_rules(matched_group or ta_group) if ta_group != 'unknown' else None
-        cert_contacts = enrichment_client.get_cert_contacts('US')
-        enrichment_data = {
-            'victim': victim_info,
-            'group': group_info,
-            'yara_rules': yara_rules_str,
-            'cert_contacts': cert_contacts,
-            'group_name': matched_group or ta_group,
-            'victim_name': victim
-        }
-        with open(enrichment_path, 'w', encoding='utf-8') as f:
-            json.dump(enrichment_data, f, indent=2)
-    elif os.path.exists(enrichment_path):
-        with open(enrichment_path, 'r', encoding='utf-8') as f:
-            enrichment_data = json.load(f)
-        group_info = enrichment_data.get('group')
-        yara_rules_str = enrichment_data.get('yara_rules')
-        cert_contacts = enrichment_data.get('cert_contacts')
-        victim_info = enrichment_data.get('victim')
-    logger.info(f"Starting PII/PHI/PCI/entropy scan: {extracted_dir} -> {output_csv}")
-    finding_count = scan_directory_for_pii_phi_pci(
-        directory=extracted_dir,
-        case_dir=case_dir,
-        logger=logger,
-        max_workers=max_workers,
-        batch_size=batch_size,
-        csv_output_path=output_csv
-    )
-    # Log PII findings to inventory
-    if os.path.exists(output_csv):
-        import csv as _csv
-        with open(output_csv, newline='', encoding='utf-8') as f:
-            reader = _csv.DictReader(f)
-            for row in reader:
-                success = inventory.add_pii_finding(case_dir, row['file'], row['pattern'], row['match'], int(row['line']), row['context'])
-                if not success:
-                    logger.warning('Failed to add PII finding to inventory DB')
-                    click.echo('Warning: Failed to add PII finding to inventory DB')
-    logger.info(f"Scan complete. {finding_count} findings written to {output_csv}")
-    click.echo(f"Scan complete. {finding_count} findings written to {output_csv}")
-    # YARA scanning (inject enrichment rules if available)
-    extra_rules = []
-    if yara and yara_rules_str and isinstance(yara_rules_str, str) and 'rule ' in yara_rules_str:
-        from ta_dla.analyzer.yara_scanner import load_yara_rules_from_string
-        compiled = load_yara_rules_from_string(yara_rules_str, logger=logger)
-        if compiled:
-            extra_rules.append((f"ransomware.live:{ta_group}", compiled))
-            click.echo(f"[INFO] Using YARA rules from ransomware.live for group: {ta_group}")
-    if yara:
-        if not yara_output_csv:
-            yara_output_csv = os.path.join(reports_dir, 'malware.csv')
-        ruleset_names = [r.strip() for r in yara_rulesets.split(',') if r.strip() in RULESET_MAP]
-        if update_yara:
-            for r in ruleset_names:
-                repo_url, local_dir = RULESET_MAP[r]
-                success = ensure_yara_rules_repo(local_dir, logger=logger, repo_url=repo_url)
-                if not success:
-                    logger.warning('Failed to update YARA rulesets in inventory DB')
-                    click.echo('Warning: Failed to update YARA rulesets in inventory DB')
-        logger.info(f"Starting YARA scan with rulesets: {ruleset_names} -> {yara_output_csv}")
-        yara_count = scan_directory_with_yara(
+        enrichment_data = {}
+        if (victim != 'unknown' or ta_group != 'unknown') and (refresh_enrichment or not os.path.exists(enrichment_path)):
+            group_info = enrichment_client.get_group(matched_group or ta_group) if ta_group != 'unknown' else None
+            yara_rules_str = enrichment_client.get_yara_rules(matched_group or ta_group) if ta_group != 'unknown' else None
+            cert_contacts = enrichment_client.get_cert_contacts('US')
+            enrichment_data = {
+                'victim': victim_info,
+                'group': group_info,
+                'yara_rules': yara_rules_str,
+                'cert_contacts': cert_contacts,
+                'group_name': matched_group or ta_group,
+                'victim_name': victim
+            }
+            with open(enrichment_path, 'w', encoding='utf-8') as f:
+                json.dump(enrichment_data, f, indent=2)
+        elif os.path.exists(enrichment_path):
+            with open(enrichment_path, 'r', encoding='utf-8') as f:
+                enrichment_data = json.load(f)
+            group_info = enrichment_data.get('group')
+            yara_rules_str = enrichment_data.get('yara_rules')
+            cert_contacts = enrichment_data.get('cert_contacts')
+            victim_info = enrichment_data.get('victim')
+        logger.info(f"Starting PII/PHI/PCI/entropy scan: {extracted_dir} -> {output_csv}")
+        finding_count = scan_directory_for_pii_phi_pci(
             directory=extracted_dir,
-            rulesets=ruleset_names,
-            output_csv=yara_output_csv,
             case_dir=case_dir,
             logger=logger,
             max_workers=max_workers,
             batch_size=batch_size,
-            extra_rules=extra_rules if extra_rules else None
+            csv_output_path=output_csv
         )
-        # Log YARA findings to inventory
-        if os.path.exists(yara_output_csv):
+        # Log PII findings to inventory
+        if os.path.exists(output_csv):
             import csv as _csv
-            with open(yara_output_csv, newline='', encoding='utf-8') as f:
+            with open(output_csv, newline='', encoding='utf-8') as f:
                 reader = _csv.DictReader(f)
                 for row in reader:
-                    success = inventory.add_malware_hit(case_dir, row['file'], row['rule'], row['meta'], row['ruleset'])
+                    success = inventory.add_pii_finding(case_dir, row['file'], row['pattern'], row['match'], int(row['line']), row['context'])
                     if not success:
-                        logger.warning('Failed to add malware hit to inventory DB')
-                        click.echo('Warning: Failed to add malware hit to inventory DB')
-        logger.info(f"YARA scan complete. {yara_count} findings written to {yara_output_csv}")
-        click.echo(f"YARA scan complete. {yara_count} findings written to {yara_output_csv}")
-    # ClamAV scanning
-    if clamav and not skip_clamav:
-        if not clamav_output_csv:
-            clamav_output_csv = os.path.join(reports_dir, 'clamav.csv')
-        logger.info(f"Starting ClamAV scan -> {clamav_output_csv}")
-        clamav_count = scan_directory_with_clamav(
-            directory=extracted_dir,
-            output_csv=clamav_output_csv,
-            case_dir=case_dir,
-            logger=logger,
-            max_workers=max_workers,
-            batch_size=batch_size
-        )
-        # Log ClamAV findings to inventory
-        if os.path.exists(clamav_output_csv):
-            import csv as _csv
-            with open(clamav_output_csv, newline='', encoding='utf-8') as f:
-                reader = _csv.DictReader(f)
-                for row in reader:
-                    success = inventory.add_malware_hit(case_dir, row['file'], row['signature'], row['signature'], 'clamav')
+                        logger.warning('Failed to add PII finding to inventory DB')
+                        click.echo('Warning: Failed to add PII finding to inventory DB')
+        logger.info(f"Scan complete. {finding_count} findings written to {output_csv}")
+        click.echo(f"Scan complete. {finding_count} findings written to {output_csv}")
+        # YARA scanning (inject enrichment rules if available)
+        extra_rules = []
+        if yara and yara_rules_str and isinstance(yara_rules_str, str) and 'rule ' in yara_rules_str:
+            from ta_dla.analyzer.yara_scanner import load_yara_rules_from_string
+            compiled = load_yara_rules_from_string(yara_rules_str, logger=logger)
+            if compiled:
+                extra_rules.append((f"ransomware.live:{ta_group}", compiled))
+                click.echo(f"[INFO] Using YARA rules from ransomware.live for group: {ta_group}")
+        if yara:
+            if not yara_output_csv:
+                yara_output_csv = os.path.join(reports_dir, 'malware.csv')
+            ruleset_names = [r.strip() for r in yara_rulesets.split(',') if r.strip() in RULESET_MAP]
+            if update_yara:
+                for r in ruleset_names:
+                    repo_url, local_dir = RULESET_MAP[r]
+                    success = ensure_yara_rules_repo(local_dir, logger=logger, repo_url=repo_url)
                     if not success:
-                        logger.warning('Failed to add malware hit to inventory DB')
-                        click.echo('Warning: Failed to add malware hit to inventory DB')
-        logger.info(f"ClamAV scan complete. {clamav_count} infected files written to {clamav_output_csv}")
-        click.echo(f"ClamAV scan complete. {clamav_count} infected files written to {clamav_output_csv}")
-    elif clamav and skip_clamav:
-        logger.info("ClamAV scan explicitly skipped by user (--skip-clamav)")
-        click.echo("ClamAV scan explicitly skipped by user (--skip-clamav)")
-    inventory.add_event(case_dir, 'analyze_end', 'Analysis phase complete')
+                        logger.warning('Failed to update YARA rulesets in inventory DB')
+                        click.echo('Warning: Failed to update YARA rulesets in inventory DB')
+            logger.info(f"Starting YARA scan with rulesets: {ruleset_names} -> {yara_output_csv}")
+            yara_count = scan_directory_with_yara(
+                directory=extracted_dir,
+                rulesets=ruleset_names,
+                output_csv=yara_output_csv,
+                case_dir=case_dir,
+                logger=logger,
+                max_workers=max_workers,
+                batch_size=batch_size,
+                extra_rules=extra_rules if extra_rules else None
+            )
+            # Log YARA findings to inventory
+            if os.path.exists(yara_output_csv):
+                import csv as _csv
+                with open(yara_output_csv, newline='', encoding='utf-8') as f:
+                    reader = _csv.DictReader(f)
+                    for row in reader:
+                        success = inventory.add_malware_hit(case_dir, row['file'], row['rule'], row['meta'], row['ruleset'])
+                        if not success:
+                            logger.warning('Failed to add malware hit to inventory DB')
+                            click.echo('Warning: Failed to add malware hit to inventory DB')
+            logger.info(f"YARA scan complete. {yara_count} findings written to {yara_output_csv}")
+            click.echo(f"YARA scan complete. {yara_count} findings written to {yara_output_csv}")
+        # ClamAV scanning
+        if clamav and not skip_clamav:
+            if not clamav_output_csv:
+                clamav_output_csv = os.path.join(reports_dir, 'clamav.csv')
+            logger.info(f"Starting ClamAV scan -> {clamav_output_csv}")
+            clamav_count = scan_directory_with_clamav(
+                directory=extracted_dir,
+                output_csv=clamav_output_csv,
+                case_dir=case_dir,
+                logger=logger,
+                max_workers=max_workers,
+                batch_size=batch_size
+            )
+            # Log ClamAV findings to inventory
+            if os.path.exists(clamav_output_csv):
+                import csv as _csv
+                with open(clamav_output_csv, newline='', encoding='utf-8') as f:
+                    reader = _csv.DictReader(f)
+                    for row in reader:
+                        success = inventory.add_malware_hit(case_dir, row['file'], row['signature'], row['signature'], 'clamav')
+                        if not success:
+                            logger.warning('Failed to add malware hit to inventory DB')
+                            click.echo('Warning: Failed to add malware hit to inventory DB')
+            logger.info(f"ClamAV scan complete. {clamav_count} infected files written to {clamav_output_csv}")
+            click.echo(f"ClamAV scan complete. {clamav_count} infected files written to {clamav_output_csv}")
+        elif clamav and skip_clamav:
+            logger.info("ClamAV scan explicitly skipped by user (--skip-clamav)")
+            click.echo("ClamAV scan explicitly skipped by user (--skip-clamav)")
+        inventory.add_event(case_dir, 'analyze_end', 'Analysis phase complete')
+    except Exception as e:
+        click.secho(f"[FATAL] Unexpected error in analyze: {e}", fg='red')
+        if 'logger' in locals():
+            logger.error(f"[FATAL] Unexpected error in analyze: {e}\n{traceback.format_exc()}")
+        else:
+            print(traceback.format_exc())
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
@@ -400,43 +442,52 @@ def scrape(case_dir):
 @click.option('--password-list', type=click.Path(), help='Path to a file with passwords (one per line)')
 @click.option('--max-depth', type=int, default=5, help='Maximum recursion depth for nested extraction (default: 5)')
 def extract(case_dir, password, password_list, max_depth):
-    """
-    Extract all supported archives for the case, including nested archives. Handles .zip, .7z, .rar, .tar.gz, .gz, .bz2.
-    Logs extracted files to the DB and reports errors. Password-protected and multi-part archives are handled or reported.
-    Accepts passwords via --password and/or --password-list.
-    """
-    logger = get_case_logger(case_dir)
-    downloads_dir = os.path.join(case_dir, 'downloads')
-    extracted_dir = os.path.join(case_dir, 'extracted')
-    os.makedirs(extracted_dir, exist_ok=True)
-    # Combine passwords from CLI and file
-    passwords = list(password) if password else []
-    if password_list:
-        try:
-            with open(password_list, 'r') as f:
-                for line in f:
-                    pw = line.strip()
-                    if pw and not pw.startswith('#'):
-                        passwords.append(pw)
-        except Exception as e:
-            logger.error(f"Failed to read password list: {e}")
-            click.echo(f"Failed to read password list: {e}")
-    logger.info(f"Starting extraction: {downloads_dir} -> {extracted_dir}")
     try:
-        extract_all_archives(
-            input_dir=downloads_dir,
-            output_dir=extracted_dir,
-            case_dir=case_dir,
-            logger=logger,
-            depth=0,
-            max_depth=max_depth,
-            passwords=passwords if passwords else None
-        )
-        logger.info("Extraction phase complete.")
-        click.echo("Extraction phase complete.")
+        logger = get_case_logger(case_dir)
+        downloads_dir = os.path.join(case_dir, 'downloads')
+        extracted_dir = os.path.join(case_dir, 'extracted')
+        os.makedirs(extracted_dir, exist_ok=True)
+        # Check for incomplete extraction (e.g., partial files or DB status)
+        # (For now, just warn if extracted_dir is not empty)
+        if os.listdir(extracted_dir):
+            click.secho("Warning: Extracted directory is not empty. Resume or restart extraction?", fg='yellow')
+            if not click.confirm('Continue and resume extraction (recommended)?', default=True):
+                click.secho('Extraction aborted by user.', fg='red')
+                return
+        # Combine passwords from CLI and file
+        passwords = list(password) if password else []
+        if password_list:
+            try:
+                with open(password_list, 'r') as f:
+                    for line in f:
+                        pw = line.strip()
+                        if pw and not pw.startswith('#'):
+                            passwords.append(pw)
+            except Exception as e:
+                logger.error(f"Failed to read password list: {e}\n{traceback.format_exc()}")
+                click.secho(f"Failed to read password list: {e}", fg='red')
+        logger.info(f"Starting extraction: {downloads_dir} -> {extracted_dir}")
+        try:
+            extract_all_archives(
+                input_dir=downloads_dir,
+                output_dir=extracted_dir,
+                case_dir=case_dir,
+                logger=logger,
+                depth=0,
+                max_depth=max_depth,
+                passwords=passwords if passwords else None
+            )
+            logger.info("Extraction phase complete.")
+            click.echo("Extraction phase complete.")
+        except Exception as e:
+            logger.error(f"Extraction failed: {e}\n{traceback.format_exc()}")
+            click.secho(f"Extraction failed: {e}", fg='red')
     except Exception as e:
-        logger.error(f"Extraction failed: {e}")
-        click.echo(f"Extraction failed: {e}")
+        click.secho(f"[FATAL] Unexpected error in extract: {e}", fg='red')
+        if 'logger' in locals():
+            logger.error(f"[FATAL] Unexpected error in extract: {e}\n{traceback.format_exc()}")
+        else:
+            print(traceback.format_exc())
 
 @cli.command()
 @click.option('--case-dir', required=True, type=click.Path(), help='Path to the case directory')
